@@ -43,6 +43,17 @@ def build_search_query(
     pushed_within_days: int,
     min_stars: int,
 ) -> str:
+    def _dedup_keep(seq: List[str]) -> List[str]:
+        seen = set()
+        out: List[str] = []
+        for s in seq:
+            key = s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(s)
+        return out
+
     def _is_ascii(s: str) -> bool:
         try:
             s.encode("ascii")
@@ -68,9 +79,23 @@ def build_search_query(
     if min_stars > 0:
         advanced.append(f"stars:>={min_stars}")
     if include_topics:
-        advanced += [f"topic:{kw.lower()}" for kw in keywords if " " not in kw and _is_ascii(kw)]
+        topic_candidates = [kw for kw in keywords if " " not in kw and _is_ascii(kw)]
+        topic_candidates = _dedup_keep(topic_candidates)[:3]
+        advanced += [f"topic:{kw.lower()}" for kw in topic_candidates]
     advanced.extend(filters)
     return " ".join([*terms, *advanced])
+
+
+def select_keywords(keywords: List[str], max_keywords: int = 4) -> List[str]:
+    deduped = []
+    seen = set()
+    for kw in keywords:
+        key = kw.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(kw)
+    return deduped[:max_keywords] if max_keywords > 0 else deduped
 
 
 def sse(event: str, data: dict) -> str:
@@ -98,8 +123,10 @@ async def search(body: SearchRequest):
     if not parsed.keywords:
         parsed.keywords = [body.query]
 
+    selected_keywords = select_keywords(parsed.keywords, max_keywords=4)
+
     gh_query = build_search_query(
-        parsed.keywords,
+        selected_keywords,
         parsed.languages,
         parsed.filters,
         include_name=body.include_name,
@@ -115,6 +142,27 @@ async def search(body: SearchRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"GitHub API error: {exc}")
+
+    # fallback: if no results and we had more than 1 keyword, retry with first 2 keywords
+    if not repos and len(selected_keywords) > 1:
+        narrowed = select_keywords(selected_keywords, max_keywords=2)
+        gh_query = build_search_query(
+            narrowed,
+            parsed.languages,
+            parsed.filters,
+            include_name=body.include_name,
+            include_description=body.include_description,
+            include_readme=body.include_readme,
+            include_topics=body.include_topics,
+            pushed_within_days=body.pushed_within_days,
+            min_stars=body.min_stars,
+        )
+        try:
+            repos = await github.search_repositories(
+                gh_query, per_page=body.per_page, sort=body.sort, order="desc"
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"GitHub API error: {exc}")
 
     results: List[RepoResult] = []
     for repo in repos:
@@ -170,28 +218,54 @@ async def search_stream(
             parsed = await intent_parser.parse(query)
             if not parsed.keywords:
                 parsed.keywords = [query]
-            yield sse("intent", {"keywords": parsed.keywords})
+            selected_keywords = select_keywords(parsed.keywords, max_keywords=4)
+            yield sse("intent", {"keywords": selected_keywords})
         except Exception as exc:
             yield sse("error", {"detail": f"Intent parse failed: {exc}"})
             return
 
-        gh_query = build_search_query(
-            parsed.keywords,
-            parsed.languages,
-            parsed.filters,
-            include_name=include_name,
-            include_description=include_description,
-            include_readme=include_readme,
-            include_topics=include_topics,
-            pushed_within_days=pushed_within_days,
-            min_stars=min_stars,
-        )
-        yield sse("debug-query", {"github_query": gh_query})
-        try:
-            repos = await github.search_repositories(gh_query, per_page=per_page, sort=sort, order="desc")
-        except Exception as exc:
-            yield sse("error", {"detail": f"GitHub API error: {exc}"})
+        async def do_query(keywords: List[str]):
+            gh_query_local = build_search_query(
+                keywords,
+                parsed.languages,
+                parsed.filters,
+                include_name=include_name,
+                include_description=include_description,
+                include_readme=include_readme,
+                include_topics=include_topics,
+                pushed_within_days=pushed_within_days,
+                min_stars=min_stars,
+            )
+            yield sse("debug-query", {"github_query": gh_query_local})
+            try:
+                repos_local = await github.search_repositories(
+                    gh_query_local, per_page=per_page, sort=sort, order="desc"
+                )
+                yield repos_local
+            except Exception as exc:
+                yield sse("error", {"detail": f"GitHub API error: {exc}"})
+                yield None
+
+        # first attempt
+        repos = None
+        async for result in do_query(selected_keywords):
+            if isinstance(result, str):
+                yield result  # debug or error already formatted
+            else:
+                repos = result
+        if repos is None:
             return
+
+        # fallback with fewer keywords if empty and we had multiple keywords
+        if not repos and len(selected_keywords) > 1:
+            narrowed = select_keywords(selected_keywords, max_keywords=2)
+            async for result in do_query(narrowed):
+                if isinstance(result, str):
+                    yield result
+                else:
+                    repos = result
+            if repos is None:
+                return
 
         results: List[RepoResult] = []
         for repo in repos:
