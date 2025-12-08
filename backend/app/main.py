@@ -211,12 +211,12 @@ async def search_stream(
                     reason=reason,
                 )
                 results.append(item)
+                # stream as soon as single item is ready
+                yield sse("item", item.model_dump(mode="json"))
             except Exception as exc:
                 yield sse("error", {"detail": f"Scoring error: {exc}"})
 
         results = sorted(results, key=lambda r: r.score, reverse=True)[:limit]
-        for item in results:
-            yield sse("item", item.model_dump(mode="json"))
         if use_cache:
             cache.set(query, SearchResponse(query=query, intent_keywords=parsed.keywords, results=results))
         yield sse("done", {"count": len(results)})
