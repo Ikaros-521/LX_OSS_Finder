@@ -43,6 +43,13 @@ def build_search_query(
     pushed_within_days: int,
     min_stars: int,
 ) -> str:
+    def _is_ascii(s: str) -> bool:
+        try:
+            s.encode("ascii")
+            return True
+        except UnicodeEncodeError:
+            return False
+
     terms = [f'"{kw}"' if " " in kw else kw for kw in keywords]
     scopes = []
     if include_name:
@@ -61,7 +68,7 @@ def build_search_query(
     if min_stars > 0:
         advanced.append(f"stars:>={min_stars}")
     if include_topics:
-        advanced += [f"topic:{kw.lower()}" for kw in keywords if " " not in kw]
+        advanced += [f"topic:{kw.lower()}" for kw in keywords if " " not in kw and _is_ascii(kw)]
     advanced.extend(filters)
     return " ".join([*terms, *advanced])
 
@@ -103,7 +110,9 @@ async def search(body: SearchRequest):
         min_stars=body.min_stars,
     )
     try:
-        repos = await github.search_repositories(gh_query, per_page=body.per_page)
+        repos = await github.search_repositories(
+            gh_query, per_page=body.per_page, sort=body.sort, order="desc"
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"GitHub API error: {exc}")
 
@@ -145,6 +154,7 @@ async def search_stream(
     include_topics: bool = Query(True),
     pushed_within_days: int = Query(365, ge=0, le=2000),
     min_stars: int = Query(0, ge=0),
+    sort: str | None = Query("best"),
 ):
     cached = cache.get(query) if use_cache else None
     if cached:
@@ -176,8 +186,9 @@ async def search_stream(
             pushed_within_days=pushed_within_days,
             min_stars=min_stars,
         )
+        yield sse("debug-query", {"github_query": gh_query})
         try:
-            repos = await github.search_repositories(gh_query, per_page=per_page)
+            repos = await github.search_repositories(gh_query, per_page=per_page, sort=sort, order="desc")
         except Exception as exc:
             yield sse("error", {"detail": f"GitHub API error: {exc}"})
             return

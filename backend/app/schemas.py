@@ -13,6 +13,7 @@ class SearchRequest(BaseModel):
     include_topics: bool = True
     pushed_within_days: int = 1825
     min_stars: int = 0
+    sort: str | None = "best"  # best match if None or "best"
 
 
 class RepoResult(BaseModel):

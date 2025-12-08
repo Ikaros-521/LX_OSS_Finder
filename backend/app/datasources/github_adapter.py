@@ -21,8 +21,13 @@ class GitHubAdapter(DataSource):
             client_kwargs["proxies"] = self.settings.github_proxy
         self.client = httpx.AsyncClient(**client_kwargs)
 
-    async def search_repositories(self, query: str, per_page: int = 10) -> List[RepoCandidate]:
-        params = {"q": query, "sort": "stars", "order": "desc", "per_page": per_page}
+    async def search_repositories(
+        self, query: str, per_page: int = 10, sort: str | None = None, order: str = "desc"
+    ) -> List[RepoCandidate]:
+        params = {"q": query, "per_page": per_page}
+        if sort and sort != "best":
+            params["sort"] = sort
+            params["order"] = order
         try:
             resp = await self.client.get("/search/repositories", params=params, headers=self.headers, timeout=20)
             resp.raise_for_status()

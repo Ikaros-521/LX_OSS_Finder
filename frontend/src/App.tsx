@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [minStars, setMinStars] = useState(0);
   const [useCache, setUseCache] = useState(false);
   const [limit, setLimit] = useState(10);
+  const [sort, setSort] = useState<"best" | "stars" | "updated">("best");
 
   useEffect(() => {
     return () => {
@@ -48,6 +49,7 @@ const App: React.FC = () => {
       pushed_within_days: String(pushedWithinDays),
       min_stars: String(minStars),
       limit: String(limit),
+      sort,
     });
     const url = `${API_BASE}/search/stream?${params.toString()}`;
     const es = new EventSource(url);
@@ -173,6 +175,18 @@ const App: React.FC = () => {
                   onChange={(e) => setPerPage(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
                   className="rounded border border-slate-200 px-2 py-1"
                 />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span>排序</span>
+                <select
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as "best" | "stars" | "updated")}
+                  className="rounded border border-slate-200 px-2 py-1"
+                >
+                  <option value="best">相关度（默认）</option>
+                  <option value="stars">星标（高到低）</option>
+                  <option value="updated">最近更新</option>
+                </select>
               </label>
               <label className="flex flex-col gap-1">
                 <span>最小 Stars</span>
