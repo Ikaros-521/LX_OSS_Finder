@@ -8,3 +8,6 @@ out/*.png
 
 tests/
 output/
+.history
+frontend/node_modules
+.env
