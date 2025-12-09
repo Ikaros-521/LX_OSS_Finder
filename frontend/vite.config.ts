@@ -6,5 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  build: {
+    outDir: "dist",
+  },
+  base: process.env.NODE_ENV === "production" ? "/" : "/",
 });
 

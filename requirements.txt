@@ -1,0 +1,11 @@
+# Vercel 部署需要的依赖（从 backend/requirements.txt 复制）
+fastapi
+uvicorn
+httpx
+openai
+python-dotenv
+pydantic-settings
+redis
+jinja2
+loguru
+

@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import ResultCard from "./components/ResultCard";
 import { RepoResult } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8020";
+// 生产环境使用相对路径，开发环境使用配置的地址
+const API_BASE = import.meta.env.VITE_API_BASE || 
+  (import.meta.env.PROD ? "/api" : "http://localhost:8020");
 
 const App: React.FC = () => {
   const [query, setQuery] = useState("");

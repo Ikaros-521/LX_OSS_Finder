@@ -63,10 +63,57 @@ npm run dev   # 默认 5173
 VITE_API_BASE=http://localhost:8020
 ```
 
+## Vercel 部署
+
+项目已配置支持 Vercel 一键部署：
+
+### 部署步骤
+
+1. **推送代码到 GitHub**
+
+2. **在 Vercel 导入项目**
+   - 访问 [Vercel](https://vercel.com)
+   - 点击 "New Project"
+   - 导入你的 GitHub 仓库
+
+3. **配置环境变量**
+   在 Vercel 项目设置中添加以下环境变量：
+   ```
+   OPENAI_API_KEY=your_key
+   OPENAI_API_BASE=https://api.example/v1  # 可选
+   OPENAI_MODEL=gpt-4o-mini  # 可选，默认 gpt-4o-mini
+   GITHUB_TOKEN=your_github_token
+   GITHUB_PROXY=http://127.0.0.1:7890  # 可选，如果需要代理
+   CORS_ORIGINS=["*"]  # 可选
+   ```
+
+4. **部署**
+   - Vercel 会自动检测配置并部署
+   - 前端部署在根路径 `/`
+   - 后端 API 部署在 `/api/*`
+
+### 注意事项
+
+- **Serverless 环境限制**：Vercel 的 Serverless Functions 有执行时间限制（Hobby 计划 10 秒，Pro 计划 60 秒）
+- **流式响应**：SSE 流式响应在 Vercel 上可能有限制，建议使用普通 POST 接口
+- **缓存**：内存缓存在不同函数实例间不共享，建议使用 Redis 或 Vercel KV
+- **冷启动**：首次请求可能较慢（冷启动），后续请求会更快
+
+### 本地测试 Vercel 环境
+
+```bash
+# 安装 Vercel CLI
+npm i -g vercel
+
+# 在项目根目录运行
+vercel dev
+```
+
 ## 后续扩展
 - 在 `app/datasources/` 下新增 gitee、gitlab 适配器并实现同样的 `search_repositories` 接口。
 - 增加更细的评分维度（issue 响应速度、CI 状态）。
 - 为关键逻辑添加单元测试与快照数据。
+- 适配 Vercel KV 或 Redis 实现跨实例缓存。
 
 
 
