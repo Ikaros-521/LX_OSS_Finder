@@ -11,12 +11,10 @@ sys.path.insert(0, str(backend_path))
 # Import FastAPI app
 from app.main import app
 
-# Vercel Python runtime expects a handler function
-# For ASGI apps like FastAPI, we need to use Mangum adapter
-try:
-    from mangum import Mangum
-    handler = Mangum(app, lifespan="off")
-except ImportError:
-    # Fallback: direct app export (may not work for all routes)
-    handler = app
+# Vercel Python runtime with @vercel/python supports ASGI apps directly
+# But we need to wrap it with Mangum for Lambda compatibility
+from mangum import Mangum
+
+# Create Mangum adapter - this converts ASGI to Lambda/API Gateway format
+handler = Mangum(app, lifespan="off")
 

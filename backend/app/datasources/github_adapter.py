@@ -20,8 +20,18 @@ class GitHubAdapter(DataSource):
         client_kwargs = {
             "base_url": str(self.settings.github_base_url),
         }
+        # httpx proxies should be a dict with protocol keys
         if self.settings.github_proxy:
-            client_kwargs["proxies"] = self.settings.github_proxy
+            # Convert proxy string to httpx format
+            proxy_url = self.settings.github_proxy
+            if proxy_url.startswith("http://") or proxy_url.startswith("https://"):
+                client_kwargs["proxies"] = {"http://": proxy_url, "https://": proxy_url}
+            elif proxy_url.startswith("socks5://"):
+                # For SOCKS5, need to use httpx with socks support
+                client_kwargs["proxies"] = {"http://": proxy_url, "https://": proxy_url}
+            else:
+                # Default to http
+                client_kwargs["proxies"] = {"http://": proxy_url, "https://": proxy_url}
         self.client = httpx.AsyncClient(**client_kwargs)
 
     async def search_repositories(
