@@ -1,4 +1,5 @@
 import json
+from loguru import logger
 from datetime import datetime, timedelta
 from typing import List, AsyncGenerator
 
@@ -6,14 +7,24 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .config import get_settings
-from .datasources.github_adapter import GitHubAdapter
-from .schemas import RepoResult, SearchRequest, SearchResponse
-from .services.cache import InMemoryCache
-from .services.intent_parser import IntentParser
-from .services.reasoner import Reasoner
-from .services.scoring import compute_score
-
+try:
+    from .config import get_settings
+    from .datasources.github_adapter import GitHubAdapter
+    from .schemas import RepoResult, SearchRequest, SearchResponse
+    from .services.cache import InMemoryCache
+    from .services.intent_parser import IntentParser
+    from .services.reasoner import Reasoner
+    from .services.repo_recommender import RepoRecommender
+    from .services.scoring import compute_score
+except Exception as e:
+    from config import get_settings
+    from datasources.github_adapter import GitHubAdapter
+    from schemas import RepoResult, SearchRequest, SearchResponse
+    from services.cache import InMemoryCache
+    from services.intent_parser import IntentParser
+    from services.reasoner import Reasoner
+    from services.repo_recommender import RepoRecommender
+    from services.scoring import compute_score
 
 settings = get_settings()
 app = FastAPI(title="LX OSS Finder", version="0.1.0")
@@ -29,6 +40,7 @@ app.add_middleware(
 github = GitHubAdapter()
 intent_parser = IntentParser()
 reasoner = Reasoner()
+repo_recommender = RepoRecommender()
 cache = InMemoryCache()
 
 
@@ -246,35 +258,64 @@ async def search_stream(
                 yield sse("error", {"detail": f"GitHub API error: {exc}"})
                 yield None
 
-        # first attempt
+        # Parallel: keyword search + LLM recommendation
+        # Start keyword search
         repos = None
+        logger.info(f"[流式搜索] 开始关键词搜索，关键词: {selected_keywords}")
         async for result in do_query(selected_keywords):
             if isinstance(result, str):
                 yield result  # debug or error already formatted
             else:
                 repos = result
         if repos is None:
+            logger.warning("[流式搜索] 关键词搜索返回 None，可能出错")
             return
 
-        # fallback with fewer keywords if empty and we had multiple keywords
+        logger.info(f"[流式搜索] 关键词搜索完成，返回 {len(repos) if repos else 0} 个仓库")
+
+        # Fallback with fewer keywords if empty and we had multiple keywords
         if not repos and len(selected_keywords) > 1:
             narrowed = select_keywords(selected_keywords, max_keywords=2)
+            logger.info(f"[流式搜索] 关键词搜索结果为空，尝试使用更少的关键词: {narrowed}")
             async for result in do_query(narrowed):
                 if isinstance(result, str):
                     yield result
                 else:
                     repos = result
             if repos is None:
+                logger.warning("[流式搜索] 回退搜索也返回 None")
                 return
+            logger.info(f"[流式搜索] 回退搜索完成，返回 {len(repos)} 个仓库")
 
+        # Start LLM recommendation in parallel
+        llm_recommended_names = []
+        try:
+            logger.info(f"[流式搜索] 开始调用 LLM 推荐，query={query}")
+            llm_recommended_names = await repo_recommender.recommend(query, max_repos=5)
+            logger.info(f"[流式搜索] LLM 推荐完成，返回 {len(llm_recommended_names)} 个仓库: {llm_recommended_names}")
+        except Exception as e:
+            logger.warning(f"[流式搜索] LLM 推荐失败: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"[流式搜索] LLM 推荐异常堆栈:\n{traceback.format_exc()}")
+            # LLM recommendation failed, continue with search results only
+
+        # Convert search results to dict for deduplication
+        seen = set()
         results: List[RepoResult] = []
+
+        # Process keyword search results first
+        logger.info(f"[流式搜索] 开始处理关键词搜索结果，共 {len(repos)} 个仓库")
         for repo in repos:
+            full_name = repo.get("full_name")
+            if not full_name or full_name in seen:
+                continue
+            seen.add(full_name)
             try:
                 score = compute_score(repo)
                 reason = await reasoner.explain(query, repo)
                 item = RepoResult(
-                    name=repo.get("full_name", "").split("/")[-1],
-                    full_name=repo.get("full_name"),
+                    name=full_name.split("/")[-1],
+                    full_name=full_name,
                     html_url=repo.get("html_url"),
                     description=repo.get("description"),
                     language=repo.get("language"),
@@ -287,9 +328,55 @@ async def search_stream(
                 results.append(item)
                 # stream as soon as single item is ready
                 yield sse("item", item.model_dump(mode="json"))
+                logger.debug(f"[流式搜索] 已流式返回关键词搜索结果: {full_name}")
             except Exception as exc:
+                logger.error(f"[流式搜索] 处理关键词搜索结果失败: {full_name}, 错误: {exc}")
                 yield sse("error", {"detail": f"Scoring error: {exc}"})
+        
+        logger.info(f"[流式搜索] 关键词搜索结果处理完成，共 {len(results)} 个有效结果")
 
+        # Process LLM recommended repos (fetch details and add if not already seen)
+        logger.info(f"[流式搜索] 开始处理 {len(llm_recommended_names)} 个 LLM 推荐仓库")
+        for full_name in llm_recommended_names:
+            if full_name in seen:
+                logger.debug(f"[流式搜索] 跳过已存在的仓库: {full_name}")
+                continue
+            seen.add(full_name)
+            try:
+                repo_detail = await github.get_repository(full_name)
+                if not repo_detail:
+                    logger.warning(f"[流式搜索] 无法获取仓库详情: {full_name}")
+                    continue
+                # Convert RepoCandidate to dict format for scoring
+                repo_dict = {
+                    "full_name": repo_detail.get("full_name"),
+                    "html_url": repo_detail.get("html_url"),
+                    "description": repo_detail.get("description"),
+                    "language": repo_detail.get("language"),
+                    "stargazers_count": repo_detail.get("stargazers_count", 0),
+                    "updated_at": repo_detail.get("updated_at"),
+                    "topics": repo_detail.get("topics", []),
+                }
+                score = compute_score(repo_dict)
+                reason = await reasoner.explain(query, repo_dict)
+                item = RepoResult(
+                    name=full_name.split("/")[-1],
+                    full_name=full_name,
+                    html_url=repo_detail.get("html_url"),
+                    description=repo_detail.get("description"),
+                    language=repo_detail.get("language"),
+                    stars=repo_detail.get("stargazers_count", 0),
+                    updated_at=repo_detail.get("updated_at") or "",
+                    topics=repo_detail.get("topics") or [],
+                    score=score,
+                    reason=reason,
+                )
+                results.append(item)
+                yield sse("item", item.model_dump(mode="json"))
+            except Exception as exc:
+                yield sse("error", {"detail": f"LLM recommended repo fetch error: {exc}"})
+
+        # Final sort and limit
         results = sorted(results, key=lambda r: r.score, reverse=True)[:limit]
         if use_cache:
             cache.set(query, SearchResponse(query=query, intent_keywords=parsed.keywords, results=results))
@@ -297,3 +384,6 @@ async def search_stream(
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8020)

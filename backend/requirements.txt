@@ -6,3 +6,4 @@ python-dotenv
 redis
 jinja2
 pydantic-settings
+loguru

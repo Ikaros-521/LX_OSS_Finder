@@ -32,7 +32,7 @@ class Reasoner:
         )
         user_prompt = f"User need: {user_query}\nRepo data:\n{repo_snippet}"
         try:
-            return await self.llm.chat(system_prompt, user_prompt, model="gpt-4o-mini")
+            return await self.llm.chat(system_prompt, user_prompt)
         except Exception:
             return fallback
 

@@ -1,6 +1,9 @@
 import time
 from typing import Any, Dict, Tuple
-from ..config import get_settings
+try:
+    from ..config import get_settings
+except Exception as e:
+    from config import get_settings
 
 
 class InMemoryCache:

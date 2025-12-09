@@ -2,7 +2,10 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from ..config import get_settings
+try:
+    from ..config import get_settings
+except Exception as e:
+    from config import get_settings
 
 
 class LLMClient:
@@ -11,6 +14,7 @@ class LLMClient:
         if not settings.openai_api_key:
             # allow caller to handle absence
             self.client = None
+            self.default_model = None
             return
         self.client = AsyncOpenAI(
             api_key=settings.openai_api_key,
@@ -18,10 +22,12 @@ class LLMClient:
             timeout=20,
             max_retries=2,
         )
+        self.default_model = settings.openai_model
 
-    async def chat(self, system_prompt: str, user_prompt: str, model: str = "gpt-4o-mini") -> str:
+    async def chat(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
         if not self.client:
             raise RuntimeError("LLM client not configured")
+        model = model or self.default_model or "gpt-4o-mini"
         resp = await self.client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],

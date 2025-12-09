@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     openai_api_base: Optional[HttpUrl] = Field(
         default=None, alias="OPENAI_API_BASE"
     )  # for self-hosted proxies
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     github_token: Optional[str] = Field(default=None, alias="GITHUB_TOKEN")
     github_base_url: HttpUrl = Field(
         default="https://api.github.com", alias="GITHUB_BASE_URL"

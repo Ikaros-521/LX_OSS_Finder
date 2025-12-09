@@ -1,7 +1,10 @@
 import httpx
 from typing import List
 from .base import DataSource, RepoCandidate
-from ..config import get_settings
+try:
+    from ..config import get_settings
+except Exception as e:
+    from config import get_settings
 
 
 class GitHubAdapter(DataSource):
@@ -44,19 +47,50 @@ class GitHubAdapter(DataSource):
         for item in items:
             results.append(
                 RepoCandidate(
-                    full_name=item.get("full_name"),
-                    html_url=item.get("html_url"),
-                    description=item.get("description"),
-                    language=item.get("language"),
-                    stargazers_count=item.get("stargazers_count", 0),
-                    forks_count=item.get("forks_count", 0),
-                    open_issues_count=item.get("open_issues_count", 0),
-                    updated_at=item.get("pushed_at") or item.get("updated_at"),
-                    topics=item.get("topics", []),
-                    default_branch=item.get("default_branch"),
-                    owner_type=(item.get("owner") or {}).get("type"),
-                    license=(item.get("license") or {}).get("spdx_id"),
+                    {
+                        "full_name": item.get("full_name"),
+                        "html_url": item.get("html_url"),
+                        "description": item.get("description"),
+                        "language": item.get("language"),
+                        "stargazers_count": item.get("stargazers_count", 0),
+                        "forks_count": item.get("forks_count", 0),
+                        "open_issues_count": item.get("open_issues_count", 0),
+                        "updated_at": item.get("pushed_at") or item.get("updated_at"),
+                        "topics": item.get("topics", []),
+                        "default_branch": item.get("default_branch"),
+                        "owner_type": (item.get("owner") or {}).get("type"),
+                        "license": (item.get("license") or {}).get("spdx_id"),
+                    }
                 )
             )
         return results
+
+    async def get_repository(self, full_name: str) -> RepoCandidate | None:
+        """根据 full_name 获取单个仓库的详细信息"""
+        try:
+            resp = await self.client.get(f"/repos/{full_name}", headers=self.headers, timeout=20)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # 404 或其他错误，返回 None
+            return None
+        except httpx.RequestError:
+            return None
+
+        item = resp.json()
+        return RepoCandidate(
+            {
+                "full_name": item.get("full_name"),
+                "html_url": item.get("html_url"),
+                "description": item.get("description"),
+                "language": item.get("language"),
+                "stargazers_count": item.get("stargazers_count", 0),
+                "forks_count": item.get("forks_count", 0),
+                "open_issues_count": item.get("open_issues_count", 0),
+                "updated_at": item.get("pushed_at") or item.get("updated_at"),
+                "topics": item.get("topics", []),
+                "default_branch": item.get("default_branch"),
+                "owner_type": (item.get("owner") or {}).get("type"),
+                "license": (item.get("license") or {}).get("spdx_id"),
+            }
+        )
 
